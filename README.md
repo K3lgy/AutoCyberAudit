@@ -128,7 +128,7 @@ pip install python-can scapy bleak requests colorama reportlab obd
 | `requests` | API Telematics | — |
 | `reportlab` | Génération PDF | — |
 | `colorama` | Affichage console | optionnel, fallback sans couleurs |
-| `PyBluez2` | Bluetooth Classic | requis uniquement pour `--connection bluetooth` sur socket RFCOMM natif |
+| `PyBluez2` | Bluetooth Classic | requis uniquement pour `--connection bluetooth` sur socket RFCOMM natif ; nécessite `libbluetooth-dev` sous Debian/Ubuntu, support variable sous Windows/macOS |
 
 ### Dashboard React
 
@@ -169,7 +169,9 @@ python automotive_pentest.py --connection obd --modules can obd ble wifi api \
 # Analyse statique d'un firmware uniquement (aucune connexion véhicule requise)
 python automotive_pentest.py --modules firmware --firmware ./update.bin
 
-# Mode simulation — démonstration / formation, sans véhicule physique
+# Mode simulation — démonstration / formation, sans véhicule physique.
+# Génère des findings factices (préfixés [SIMULÉ]) pour les modules CAN/BLE/WiFi,
+# reproduisant le scénario du rapport d'exemple, et produit un PDF + JSON complets.
 python automotive_pentest.py --connection simulation --modules can ble wifi
 ```
 
@@ -261,8 +263,26 @@ Ces références sont citées à titre méthodologique ; l'outil ne constitue **
 - Les modules CAN et WiFi nécessitent un accès matériel bas niveau (`socketcan`, mode monitor) généralement indisponible sous Windows/macOS sans configuration spécifique.
 - Le module WiFi nécessite des **droits root** pour le mode monitor.
 - L'analyse firmware est basée sur des **expressions régulières** (détection de patterns) : elle peut générer des faux positifs/négatifs et ne remplace pas une rétro-ingénierie complète.
-- L'audit de l'API Telematics est une approche **boîte noire** non exhaustive ; un audit de sécurité applicatif complet (SAST/DAST, revue de code) reste recommandé en complément.
-- Le mode `simulation` ne reproduit pas fidèlement un environnement véhicule réel — il est destiné à la démonstration et à la formation.
+- L'audit de l'API Telematics est une approche **boîte noire** non exhaustive ; un audit de sécurité applicatif complet (SAST/DAST, revue de code) reste recommandé en complément. Les échecs réseau silencieux (`except: pass`) sur les sous-tests headers/IDOR/GraphQL ne génèrent pas de finding `INFO` dédié — en cas de doute sur un résultat vide, vérifier la connectivité manuellement.
+- Le sondage des **services UDS** et le test de session étendue (`UDS_EXTENDED_SESSION_OPEN`) ne fonctionnent qu'en connexion **Bluetooth Classic** (ELM327 BT) — ils sont automatiquement ignorés (avec un finding `INFO` explicite, `UDS_PROBE_SKIPPED`) en connexion OBD-II USB ou en mode simulation.
+- Le mode `--connection bluetooth` (RFCOMM/SPP) nécessite la dépendance optionnelle **PyBluez2** (`pip install PyBluez2`), distincte de `bleak` (BLE). PyBluez2 peut nécessiter des paquets système supplémentaires (`libbluetooth-dev` sous Debian/Ubuntu) et n'est pas garanti sous Windows/macOS.
+- Le mode `--connection simulation` génère désormais de vraies données factices pour les modules CAN, BLE et WiFi (clairement préfixées `[SIMULÉ]` dans chaque finding), suffisantes pour tester le pipeline complet (findings → PDF → JSON) sans véhicule réel. Le module OBD/UDS reste non simulé puisqu'il dépend intrinsèquement d'un état de connexion réel.
+
+### ✅ Ce qui a été testé et corrigé dans cette version
+
+| Problème initial | Statut |
+|---|---|
+| Import `bluetooth` (PyBluez) masqué, plantage silencieux | Corrigé — détection en en-tête (`BT_CLASSIC_AVAILABLE`) + message d'erreur explicite |
+| Mode `simulation` ne générait aucune donnée factice | Corrigé — génération de findings simulés pour CAN/BLE/WiFi |
+| `OBDUDSAuditor` silencieux hors connexion Bluetooth | Corrigé — finding `INFO` explicite (`UDS_PROBE_SKIPPED`) |
+| Détection de flood CAN basée sur une moyenne biaisée par l'outlier lui-même | Corrigé — bascule sur la **médiane** + seuil de volume absolu minimum |
+| `TelematicsAPIAuditor` classait toute erreur réseau (DNS, timeout) comme `API_TLS_ERROR` HIGH | Corrigé — distinction `API_UNREACHABLE` (INFO) vs vraie erreur TLS (HIGH) |
+| Spam de `InsecureRequestWarning` sur chaque requête API | Corrigé — warning supprimé proprement (le test `verify=False` reste volontaire) |
+| `datetime.utcnow()` deprecated (Python 3.12+) | Corrigé — migration vers `datetime.now(timezone.utc)` |
+
+Ces correctifs ont été validés par exécution réelle : `FirmwareAnalyzer` sur un binaire de test contenant des secrets factices, `TelematicsAPIAuditor` contre une URL injoignable et contre une vraie API HTTPS, et un run CLI complet (`--connection simulation --modules can ble wifi firmware`) générant un rapport PDF + JSON cohérent de bout en bout.
+
+
 
 ---
 
